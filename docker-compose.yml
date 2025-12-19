@@ -1,0 +1,47 @@
+services:
+  bge_inference_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: manaszz/bge_inference_service:local
+    container_name: bge-inference-service
+    ports:
+      - "8011:8011"
+    environment:
+      SERVICE_NAME: bge-inference-service
+      HOST: 0.0.0.0
+      PORT: 8011
+      LOG_LEVEL: INFO
+
+      # GPU (production)
+      DEVICE: cuda
+      USE_FP16: "true"
+
+      # Models
+      EMBEDDING_MODEL_NAME: BAAI/bge-m3
+      RERANKER_MODEL_NAME: BAAI/bge-reranker-v2-m3
+      EMBEDDING_SIZE: 1024
+
+      # Sparse
+      SPARSE_TOKEN_MAPPING: tokenizer
+      SPARSE_INDEX_SPACE: 1048576
+      TOKENIZER_TRUST_REMOTE_CODE: "true"
+
+      MAX_TEXT_CHARS: 10000
+      MAX_BATCH_SIZE: 64
+
+    # Persist HF model cache between restarts (recommended)
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+
+    # GPU enablement (Docker Compose v2)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf_cache:
