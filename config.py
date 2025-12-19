@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     max_text_chars: int = Field(default=10000, env="MAX_TEXT_CHARS")
     max_batch_size: int = Field(default=64, env="MAX_BATCH_SIZE")
     inference_batch_size: int = Field(default=256, env="INFERENCE_BATCH_SIZE")
+
+    # Microbatching (service-level batching across concurrent HTTP requests)
+    embedding_microbatch_enabled: bool = Field(default=False, env="EMBEDDING_MICROBATCH_ENABLED")
+    embedding_microbatch_max_wait_ms: int = Field(default=10, env="EMBEDDING_MICROBATCH_MAX_WAIT_MS")
+    embedding_microbatch_max_batch_texts: int = Field(default=256, env="EMBEDDING_MICROBATCH_MAX_BATCH_TEXTS")
+    embedding_microbatch_queue_maxsize: int = Field(default=2048, env="EMBEDDING_MICROBATCH_QUEUE_MAXSIZE")
 
     # API
     openai_default_model_alias: str = Field(default="bge-m3", env="OPENAI_DEFAULT_MODEL_ALIAS")

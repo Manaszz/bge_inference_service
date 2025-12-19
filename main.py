@@ -6,6 +6,7 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException
 
+from bge_inference_service.batcher import EmbeddingMicroBatcher
 from bge_inference_service.config import settings
 from bge_inference_service.engine import BGEEngine
 from bge_inference_service.schemas import (
@@ -46,7 +47,19 @@ async def lifespan(app: FastAPI):
         logger.exception("Failed to load models: %s", e)
         # Keep app running but mark degraded
     app.state.engine = engine
+    app.state.microbatcher = EmbeddingMicroBatcher(
+        engine=engine,
+        enabled=settings.embedding_microbatch_enabled,
+        max_wait_ms=settings.embedding_microbatch_max_wait_ms,
+        max_batch_texts=settings.embedding_microbatch_max_batch_texts,
+        queue_maxsize=settings.embedding_microbatch_queue_maxsize,
+    )
+    await app.state.microbatcher.start()
     yield
+    try:
+        await app.state.microbatcher.stop()
+    except Exception:
+        logger.exception("Failed to stop microbatcher")
 
 
 app = FastAPI(
@@ -70,13 +83,14 @@ async def health() -> HealthResponse:
 
 
 @app.post("/v1/embeddings", response_model=OpenAIEmbeddingsResponse)
-def openai_embeddings(req: OpenAIEmbeddingsRequest) -> OpenAIEmbeddingsResponse:
+async def openai_embeddings(req: OpenAIEmbeddingsRequest) -> OpenAIEmbeddingsResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")
 
     texts = _as_list(req.input)
-    dense_vecs = engine.dense(texts)
+    microbatcher: EmbeddingMicroBatcher = app.state.microbatcher
+    dense_vecs = await microbatcher.embed_dense(texts)
 
     model = req.model or settings.openai_default_model_alias
     data = [OpenAIEmbeddingData(index=i, embedding=emb) for i, emb in enumerate(dense_vecs)]
@@ -84,13 +98,14 @@ def openai_embeddings(req: OpenAIEmbeddingsRequest) -> OpenAIEmbeddingsResponse:
 
 
 @app.post("/v1/sparse-embeddings", response_model=SparseEmbeddingsResponse)
-def sparse_embeddings(req: SparseEmbeddingsRequest) -> SparseEmbeddingsResponse:
+async def sparse_embeddings(req: SparseEmbeddingsRequest) -> SparseEmbeddingsResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")
 
     texts = _as_list(req.input)
-    sparse_vecs = engine.sparse(texts)
+    microbatcher: EmbeddingMicroBatcher = app.state.microbatcher
+    sparse_vecs = await microbatcher.embed_sparse(texts)
 
     model = req.model or settings.embedding_model_name
     data = [
@@ -109,13 +124,14 @@ def sparse_embeddings(req: SparseEmbeddingsRequest) -> SparseEmbeddingsResponse:
 
 
 @app.post("/v1/hybrid-embeddings", response_model=HybridEmbeddingsResponse)
-def hybrid_embeddings(req: HybridEmbeddingsRequest) -> HybridEmbeddingsResponse:
+async def hybrid_embeddings(req: HybridEmbeddingsRequest) -> HybridEmbeddingsResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")
 
     texts = _as_list(req.input)
-    dense_vecs, sparse_vecs = engine.hybrid(texts)
+    microbatcher: EmbeddingMicroBatcher = app.state.microbatcher
+    dense_vecs, sparse_vecs = await microbatcher.embed_hybrid(texts)
 
     model = req.model or settings.embedding_model_name
     data = []

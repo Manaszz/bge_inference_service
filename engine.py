@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from bge_inference_service.config import Settings
 
@@ -115,25 +115,44 @@ class BGEEngine:
             return text[: self.settings.max_text_chars]
         return text
 
-    def _prepare_texts(self, texts: Sequence[str]) -> List[str]:
+    def prepare_texts(self, texts: Sequence[str], *, max_batch_size: Optional[int] = None) -> List[str]:
+        """Validate and normalize input texts.
+
+        Notes:
+        - `max_batch_size` is an API-level limit (per request). Microbatching may
+          combine multiple requests into a larger batch and should pass a
+          different limit (or None).
+        """
         if not isinstance(texts, (list, tuple)):
             raise ValueError("texts must be a list")
         if len(texts) == 0:
             raise ValueError("texts must be non-empty")
-        if len(texts) > self.settings.max_batch_size:
-            raise ValueError(f"batch too large: {len(texts)} > {self.settings.max_batch_size}")
+        if max_batch_size is not None and len(texts) > int(max_batch_size):
+            raise ValueError(f"batch too large: {len(texts)} > {int(max_batch_size)}")
         return [self._truncate_text(t) for t in texts]
+
+    def encode_embedder(
+        self,
+        prepared_texts: Sequence[str],
+        *,
+        return_dense: bool,
+        return_sparse: bool,
+    ) -> Dict[str, Any]:
+        """Low-level encode wrapper used by both direct calls and microbatching."""
+        if not self.is_loaded:
+            raise RuntimeError("Engine not loaded")
+        return self._embedder.encode(
+            list(prepared_texts),
+            return_sparse=bool(return_sparse),
+            return_dense=bool(return_dense),
+            batch_size=self.settings.inference_batch_size,
+        )
 
     def dense(self, texts: Sequence[str]) -> List[List[float]]:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
-        prepared = self._prepare_texts(texts)
-        out = self._embedder.encode(
-            prepared, 
-            return_sparse=False, 
-            return_dense=True, 
-            batch_size=self.settings.inference_batch_size
-        )
+        prepared = self.prepare_texts(texts, max_batch_size=self.settings.max_batch_size)
+        out = self.encode_embedder(prepared, return_dense=True, return_sparse=False)
         dense_vecs = [list(map(float, v)) for v in out["dense_vecs"]]
         expected = int(self.settings.embedding_size)
         for i, v in enumerate(dense_vecs):
@@ -147,30 +166,20 @@ class BGEEngine:
     def sparse_lexical_weights(self, texts: Sequence[str]) -> List[Dict[str, float]]:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
-        prepared = self._prepare_texts(texts)
-        out = self._embedder.encode(
-            prepared, 
-            return_sparse=True, 
-            return_dense=False,
-            batch_size=self.settings.inference_batch_size
-        )
+        prepared = self.prepare_texts(texts, max_batch_size=self.settings.max_batch_size)
+        out = self.encode_embedder(prepared, return_dense=False, return_sparse=True)
         # lexical_weights: List[Dict[token, weight]]
         return out["lexical_weights"]
 
     def sparse(self, texts: Sequence[str]) -> List[SparseVector]:
         weights_list = self.sparse_lexical_weights(texts)
-        return [self._lexical_weights_to_sparse_vector(w) for w in weights_list]
+        return [self.lexical_weights_to_sparse_vector(w) for w in weights_list]
 
     def hybrid(self, texts: Sequence[str]) -> Tuple[List[List[float]], List[SparseVector]]:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
-        prepared = self._prepare_texts(texts)
-        out = self._embedder.encode(
-            prepared, 
-            return_sparse=True, 
-            return_dense=True,
-            batch_size=self.settings.inference_batch_size
-        )
+        prepared = self.prepare_texts(texts, max_batch_size=self.settings.max_batch_size)
+        out = self.encode_embedder(prepared, return_dense=True, return_sparse=True)
         dense_vecs = [list(map(float, v)) for v in out["dense_vecs"]]
         expected = int(self.settings.embedding_size)
         for i, v in enumerate(dense_vecs):
@@ -179,7 +188,7 @@ class BGEEngine:
                     f"Unexpected dense embedding size for item {i}: got {len(v)}, expected {expected}. "
                     f"Model={self.settings.embedding_model_name}"
                 )
-        sparse_vecs = [self._lexical_weights_to_sparse_vector(w) for w in out["lexical_weights"]]
+        sparse_vecs = [self.lexical_weights_to_sparse_vector(w) for w in out["lexical_weights"]]
         return dense_vecs, sparse_vecs
 
     def rerank(self, query: str, documents: Sequence[str]) -> List[float]:
@@ -209,7 +218,7 @@ class BGEEngine:
             return [float(scores)]
         return [float(s) for s in scores]
 
-    def _lexical_weights_to_sparse_vector(self, weights: Dict[Any, Any]) -> SparseVector:
+    def lexical_weights_to_sparse_vector(self, weights: Dict[Any, Any]) -> SparseVector:
         indices: List[int] = []
         values: List[float] = []
 
