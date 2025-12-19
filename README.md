@@ -136,7 +136,8 @@ Swagger документация: `http://localhost:8011/docs`
     "Инструкция по регистрации ценных бумаг...",
     "Кулинарный рецепт пиццы"
   ],
-  "top_n": 1
+  "top_n": 1,
+  "return_documents": false
 }
 ```
 
@@ -148,7 +149,7 @@ Swagger документация: `http://localhost:8011/docs`
     {
       "index": 0,
       "relevance_score": 8.42,
-      "document": null
+      "document": null // Будет заполнен текстом, если return_documents: true
     }
   ]
 }
