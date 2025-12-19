@@ -156,36 +156,173 @@ Swagger документация: `http://localhost:8011/docs`
 
 ---
 
-## 🔗 Интеграция с RAG пайплайном
+## 🔗 Интеграция с RAG пайплайном (Сценарии)
 
-### Сценарий: Hybrid Retrieval + Rerank
+Ниже приведены примеры реализации RAG-пайплайна с использованием этого сервиса.
+
+### Конфигурация клиента
 
 ```python
+import os
 import requests
+from openai import OpenAI
+from qdrant_client import QdrantClient
 
-# 1. Получаем гибридный вектор запроса
-hybrid_data = requests.post("http://localhost:8011/v1/hybrid-embeddings", 
-                            json={"input": "Мой вопрос"}).json()["data"][0]
+# Настройки
+BGE_SERVICE_URL = os.getenv("BGE_SERVICE_URL", "http://localhost:8011")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# 2. Поиск в Qdrant (используя полученные dense и sparse векторы)
-search_results = qdrant_client.query_points(
-    collection_name="docs",
-    prefetch=[
-        {"query": hybrid_data["dense"], "using": "dense", "limit": 20},
-        {"query": hybrid_data["sparse"], "using": "sparse", "limit": 20}
-    ],
-    limit=20
-)
+# Клиенты
+bge_session = requests.Session()
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+qdrant_client = QdrantClient(url="http://localhost:6333")
 
-# 3. Реранкинг результатов
-rerank_req = {
-    "query": "Мой вопрос",
-    "documents": [hit.payload["text"] for hit in search_results.points],
-    "top_n": 5
-}
-top_hits = requests.post("http://localhost:8011/v1/rerank", json=rerank_req).json()["results"]
+def get_bge_sparse(text: str) -> dict:
+    """Helper для получения sparse вектора."""
+    resp = bge_session.post(
+        f"{BGE_SERVICE_URL}/v1/sparse-embeddings",
+        json={"input": [text]}
+    )
+    resp.raise_for_status()
+    # Возвращает структуру: {"indices": [...], "values": [...]}
+    return resp.json()["data"][0]["sparse"]
 
-# 4. Передача top_hits в контекст LLM
+def get_bge_hybrid(text: str) -> dict:
+    """Helper для получения hybrid (dense+sparse)."""
+    resp = bge_session.post(
+        f"{BGE_SERVICE_URL}/v1/hybrid-embeddings",
+        json={"input": [text]}
+    )
+    resp.raise_for_status()
+    return resp.json()["data"][0]
+```
+
+### Сценарий A: Ingest (OpenAI Dense + BGE Sparse)
+
+Используется, если вы хотите оставить качество Dense-векторов от OpenAI (1536 dim), но добавить keyword-search через BGE-M3.
+
+```python
+def ingest_document_openai_bge(text: str, doc_id: str):
+    # 1. Получаем Dense от OpenAI
+    dense_resp = openai_client.embeddings.create(
+        input=text,
+        model="text-embedding-3-small"
+    )
+    dense_vector = dense_resp.data[0].embedding
+
+    # 2. Получаем Sparse от BGE Service
+    sparse_vector = get_bge_sparse(text)
+
+    # 3. Сохраняем в Qdrant
+    qdrant_client.upsert(
+        collection_name="my_collection",
+        points=[{
+            "id": doc_id,
+            "vector": {
+                "dense": dense_vector,
+                "sparse": sparse_vector
+            },
+            "payload": {"text": text}
+        }]
+    )
+```
+
+### Сценарий B: Ingest (Full Hybrid via BGE)
+
+Полностью локальный вариант (бесплатно, без OpenAI). Использует Dense (1024 dim) и Sparse от BGE-M3.
+
+```python
+def ingest_document_full_bge(text: str, doc_id: str):
+    # 1. Получаем оба вектора за один запрос к GPU-сервису
+    hybrid_result = get_bge_hybrid(text)
+    
+    dense_vector = hybrid_result["dense"]
+    sparse_vector = hybrid_result["sparse"]
+
+    # 2. Сохраняем в Qdrant
+    qdrant_client.upsert(
+        collection_name="my_collection",
+        points=[{
+            "id": doc_id,
+            "vector": {
+                "dense": dense_vector,
+                "sparse": sparse_vector
+            },
+            "payload": {"text": text}
+        }]
+    )
+```
+
+### Сценарий C: Retrieval (Hybrid Search)
+
+Получение вектора запроса и поиск в БД с использованием Prefetch.
+
+```python
+def search_documents(query: str, top_k: int = 10):
+    # 1. Генерируем векторы для запроса (Full BGE вариант)
+    hybrid_query = get_bge_hybrid(query)
+    dense_query = hybrid_query["dense"]
+    sparse_query = hybrid_query["sparse"]
+
+    # 2. Выполняем гибридный поиск в Qdrant
+    search_result = qdrant_client.query_points(
+        collection_name="my_collection",
+        prefetch=[
+            {
+                "query": dense_query,
+                "using": "dense",
+                "limit": top_k
+            },
+            {
+                "query": sparse_query,
+                "using": "sparse",
+                "limit": top_k
+            }
+        ],
+        limit=top_k
+    )
+    
+    return [hit.payload for hit in search_result.points]
+```
+
+### Сценарий D: Rerank & LLM Context
+
+Переранжирование результатов поиска перед отправкой в LLM (Cross-Encoder).
+
+```python
+def generate_answer(query: str, initial_docs: list[dict]):
+    # initial_docs - список словарей с полем 'text' из шага Retrieval
+    
+    # 1. Подготовка документов для реранкера
+    docs_text = [doc["text"] for doc in initial_docs]
+
+    # 2. Запрос к сервису реранкинга (/v1/rerank)
+    rerank_resp = bge_session.post(
+        f"{BGE_SERVICE_URL}/v1/rerank",
+        json={
+            "query": query,
+            "documents": docs_text,
+            "top_n": 5,           # Берем только ТОП-5 релевантных
+            "return_documents": False 
+        }
+    )
+    rerank_resp.raise_for_status()
+    results = rerank_resp.json()["results"]
+    
+    # 3. Формируем контекст из результатов реранкинга
+    top_docs = [initial_docs[res["index"]]["text"] for res in results]
+    context_str = "\n\n".join(top_docs)
+
+    # 4. Генерация ответа через LLM
+    completion = openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Ответь на вопрос на основе контекста."},
+            {"role": "user", "content": f"Контекст:\n{context_str}\n\nВопрос: {query}"}
+        ]
+    )
+    
+    return completion.choices[0].message.content
 ```
 
 ---
