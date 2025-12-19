@@ -1,228 +1,203 @@
 # BGE Inference Service
 
-Микросервис для векторного поиска и реранкинга, предоставляющий API для моделей семейства BGE (FlagEmbedding).
+Высокопроизводительный микросервис для генерации эмбеддингов и реранкинга на базе моделей семейства **BGE (FlagEmbedding)**. 
 
-## Архитектура и Best Practices
+Разработан как независимый компонент для RAG-систем, требующих поддержки гибридного поиска (Dense + Sparse) и качественного переранжирования на GPU.
 
-Данный сервис реализует паттерн **Model-as-a-Service**. Вынесение тяжелого инференса (GPU/PyTorch) в отдельный сервис обеспечивает:
-1. **Изоляцию ресурсов:** GPU-вычисления не блокируют I/O операции основного API.
-2. **Оптимизацию Docker-образов:** Основной бэкенд не тянет за собой `torch` и CUDA-зависимости (размер образа снижается с 5GB+ до <500MB).
-3. **Независимое масштабирование:** Можно масштабировать GPU-воркеры отдельно от бизнес-логики.
+## 🎯 Назначение и Ключевые возможности
 
-Сервис спроектирован как drop-in замена (или дополнение) для решений типа Text Embeddings Inference (TEI), добавляя поддержку специфичных для проекта алгоритмов (кастомный sparse-mapping).
+Сервис предоставляет унифицированный REST API для выполнения тяжелых вычислительных задач NLP, изолируя их от основной бизнес-логики приложения.
 
-## API Reference
-
-- **Swagger UI:** `http://localhost:8011/docs`
-- **OpenAPI Schema:** `http://localhost:8011/openapi.json`
-
-### Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/v1/embeddings` | Dense векторы (OpenAI compatible format) |
-| POST | `/v1/sparse-embeddings` | Sparse векторы (Indices + Values) |
-| POST | `/v1/hybrid-embeddings` | Одновременно Dense + Sparse |
-| POST | `/v1/rerank` | Реранкинг пар запрос-документ (Cohere compatible) |
-| GET | `/health` | Статус загрузки моделей |
+### Основной функционал:
+- **Dense Embeddings**: Генерация плотных векторов (BGE-M3) в формате, совместимом с OpenAI API.
+- **Sparse Embeddings**: Извлечение лексических весов (Lexical Weights) и их преобразование в разреженные векторы (Indices + Values).
+- **Hybrid Embeddings**: Одновременная генерация плотных и разреженных векторов за один проход модели (оптимизация GPU-инференса).
+- **Cross-Encoder Rerank**: Высокоточное переранжирование документов относительно запроса с использованием Cross-Encoder моделей.
+- **Custom Sparse Mapping**: Поддержка детерминированного хеширования (SHA256) или Tokenizer IDs для обеспечения совместимости с существующими индексами в векторных БД (например, Qdrant).
 
 ---
 
-## Integration Guide (Примеры использования)
+## 🏗 Архитектура и Best Practices
 
-Ниже приведены примеры реализации RAG-пайплайна с использованием этого сервиса.
+Сервис реализует паттерн **Model-as-a-Service (MaaS)**, что дает ряд преимуществ:
 
-### Конфигурация клиента
+1. **Изоляция вычислительных ресурсов**: Тяжелые модели PyTorch/CUDA работают в отдельном процессе и не блокируют I/O-воркеры основного API.
+2. **Оптимизация инфраструктуры**: Образ основного приложения остается легким (~200MB), в то время как GPU-зависимости (5GB+) локализованы в данном сервисе.
+3. **Независимое масштабирование**: Вы можете запускать несколько реплик инференс-сервиса на разных GPU-нодах независимо от бэкенда.
+4. **Гарантированная совместимость**: В сервис заложена логика хеширования токенов, идентичная оригинальному RAG-проекту, что исключает расхождение векторов при миграции.
+
+---
+
+## 🚀 Быстрый старт (Docker Compose)
+
+Самый простой способ запустить сервис на GPU:
+
+```bash
+# Клонирование и запуск
+git clone https://github.com/Manaszz/bge_inference_service.git
+cd bge_inference_service
+docker compose up --build -d
+```
+
+Сервис станет доступен по адресу: `http://localhost:8011`
+Swagger документация: `http://localhost:8011/docs`
+
+---
+
+## ⚙️ Конфигурация (.env)
+
+Основные параметры настраиваются через переменные окружения:
+
+| Переменная | Значение по умолчанию | Описание |
+|------------|-----------------------|----------|
+| `DEVICE` | `cuda` | Устройство для инференса (`cuda` или `cpu`). |
+| `EMBEDDING_MODEL_NAME` | `BAAI/bge-m3` | Модель для эмбеддингов. |
+| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Модель для реранкинга. |
+| `EMBEDDING_SIZE` | `1024` | Размерность dense-вектора (валидируется при ответе). |
+| `SPARSE_TOKEN_MAPPING` | `tokenizer` | Метод маппинга: `tokenizer` (ID токенов) или `hash` (SHA256). |
+| `SPARSE_INDEX_SPACE` | `1048576` | Размер пространства индексов для sparse-вектора (2^20). |
+| `USE_FP16` | `true` | Использование половинной точности (рекомендуется для GPU). |
+
+---
+
+## 🛠 API Documentation
+
+### 1. Плотные эмбеддинги (OpenAI Compatible)
+`POST /v1/embeddings`
+
+**Request:**
+```json
+{
+  "model": "bge-m3",
+  "input": ["Текст для обработки"],
+  "encoding_format": "float"
+}
+```
+
+**Response:**
+```json
+{
+  "object": "list",
+  "model": "bge-m3",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.012, -0.045, ...] // 1024 измерения
+    }
+  ],
+  "usage": {"prompt_tokens": 0, "total_tokens": 0}
+}
+```
+
+### 2. Разреженные эмбеддинги
+`POST /v1/sparse-embeddings`
+
+Возвращает веса токенов, преобразованные в индексы.
+
+**Request:**
+```json
+{ "input": "Как зарегистрировать облигации?" }
+```
+
+**Response:**
+```json
+{
+  "model": "BAAI/bge-m3",
+  "data": [
+    {
+      "index": 0,
+      "sparse": {
+        "indices": [1284, 4592, 901],
+        "values": [0.45, 0.21, 0.11],
+        "mapping": "tokenizer",
+        "index_space": 1048576
+      }
+    }
+  ]
+}
+```
+
+### 3. Гибридные эмбеддинги (Оптимизировано)
+`POST /v1/hybrid-embeddings`
+
+Возвращает и dense, и sparse векторы за один вызов. Рекомендуется для индексации в Qdrant.
+
+### 4. Реранкинг (Cohere Style)
+`POST /v1/rerank`
+
+Вычисляет оценку релевантности для пар запрос-документ.
+
+**Request:**
+```json
+{
+  "query": "регистрация выпуска",
+  "documents": [
+    "Инструкция по регистрации ценных бумаг...",
+    "Кулинарный рецепт пиццы"
+  ],
+  "top_n": 1
+}
+```
+
+**Response:**
+```json
+{
+  "model": "BAAI/bge-reranker-v2-m3",
+  "results": [
+    {
+      "index": 0,
+      "relevance_score": 8.42,
+      "document": null
+    }
+  ]
+}
+```
+
+---
+
+## 🔗 Интеграция с RAG пайплайном
+
+### Сценарий: Hybrid Retrieval + Rerank
 
 ```python
-import os
 import requests
-from openai import OpenAI
-from qdrant_client import QdrantClient
 
-# Настройки
-BGE_SERVICE_URL = os.getenv("BGE_SERVICE_URL", "http://localhost:8011")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# 1. Получаем гибридный вектор запроса
+hybrid_data = requests.post("http://localhost:8011/v1/hybrid-embeddings", 
+                            json={"input": "Мой вопрос"}).json()["data"][0]
 
-# Клиенты
-bge_session = requests.Session()
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-qdrant_client = QdrantClient(url="http://localhost:6333")
+# 2. Поиск в Qdrant (используя полученные dense и sparse векторы)
+search_results = qdrant_client.query_points(
+    collection_name="docs",
+    prefetch=[
+        {"query": hybrid_data["dense"], "using": "dense", "limit": 20},
+        {"query": hybrid_data["sparse"], "using": "sparse", "limit": 20}
+    ],
+    limit=20
+)
 
-def get_bge_sparse(text: str) -> dict:
-    """Helper для получения sparse вектора."""
-    resp = bge_session.post(
-        f"{BGE_SERVICE_URL}/v1/sparse-embeddings",
-        json={"input": [text]}
-    )
-    resp.raise_for_status()
-    # Возвращает структуру: {"indices": [...], "values": [...]}
-    return resp.json()["data"][0]["sparse"]
+# 3. Реранкинг результатов
+rerank_req = {
+    "query": "Мой вопрос",
+    "documents": [hit.payload["text"] for hit in search_results.points],
+    "top_n": 5
+}
+top_hits = requests.post("http://localhost:8011/v1/rerank", json=rerank_req).json()["results"]
 
-def get_bge_hybrid(text: str) -> dict:
-    """Helper для получения hybrid (dense+sparse)."""
-    resp = bge_session.post(
-        f"{BGE_SERVICE_URL}/v1/hybrid-embeddings",
-        json={"input": [text]}
-    )
-    resp.raise_for_status()
-    return resp.json()["data"][0]
-```
-
-### Сценарий A: Ingest (OpenAI Dense + BGE Sparse)
-
-Используется, если вы хотите оставить качество Dense-векторов от OpenAI, но добавить keyword-search через BGE-M3.
-
-```python
-def ingest_document_openai_bge(text: str, doc_id: str):
-    # 1. Получаем Dense от OpenAI
-    dense_resp = openai_client.embeddings.create(
-        input=text,
-        model="text-embedding-3-small"
-    )
-    dense_vector = dense_resp.data[0].embedding
-
-    # 2. Получаем Sparse от BGE Service
-    sparse_vector = get_bge_sparse(text)
-
-    # 3. Сохраняем в Qdrant
-    qdrant_client.upsert(
-        collection_name="my_collection",
-        points=[{
-            "id": doc_id,
-            "vector": {
-                "dense": dense_vector,
-                "sparse": sparse_vector
-            },
-            "payload": {"text": text}
-        }]
-    )
-```
-
-### Сценарий B: Ingest (Full Hybrid via BGE)
-
-Полностью локальный вариант (бесплатно, без OpenAI).
-
-```python
-def ingest_document_full_bge(text: str, doc_id: str):
-    # 1. Получаем оба вектора за один запрос
-    hybrid_result = get_bge_hybrid(text)
-    
-    dense_vector = hybrid_result["dense"]
-    sparse_vector = hybrid_result["sparse"]
-
-    # 2. Сохраняем в Qdrant
-    qdrant_client.upsert(
-        collection_name="my_collection",
-        points=[{
-            "id": doc_id,
-            "vector": {
-                "dense": dense_vector,
-                "sparse": sparse_vector
-            },
-            "payload": {"text": text}
-        }]
-    )
-```
-
-### Сценарий C: Retrieval (Hybrid Search)
-
-Получение вектора запроса и поиск в БД.
-
-```python
-def search_documents(query: str, top_k: int = 10):
-    # 1. Генерируем векторы для запроса
-    # Вариант с OpenAI + BGE:
-    # dense_query = openai_client.embeddings.create(input=query, ...).data[0].embedding
-    # sparse_query = get_bge_sparse(query)
-    
-    # Вариант Pure BGE:
-    hybrid_query = get_bge_hybrid(query)
-    dense_query = hybrid_query["dense"]
-    sparse_query = hybrid_query["sparse"]
-
-    # 2. Выполняем поиск в Qdrant (Hybrid Query)
-    # Используем prefetch для гибридного поиска (RRF или Score Fusion)
-    search_result = qdrant_client.query_points(
-        collection_name="my_collection",
-        prefetch=[
-            {
-                "query": dense_query,
-                "using": "dense",
-                "limit": top_k
-            },
-            {
-                "query": sparse_query,
-                "using": "sparse",
-                "limit": top_k
-            }
-        ],
-        query=None, # RRF fusion strategy would go here in newer Qdrant APIs
-        limit=top_k
-    )
-    
-    # Упрощенно возвращаем payload
-    return [hit.payload for hit in search_result.points]
-```
-
-### Сценарий D: Rerank & LLM Context
-
-Переранжирование результатов поиска перед отправкой в LLM.
-
-```python
-def generate_answer(query: str, initial_docs: list[dict]):
-    # initial_docs - список словарей с полем 'text' из шага Retrieval
-    
-    # 1. Подготовка документов для реранкера
-    # API ожидает список строк или объектов
-    docs_text = [doc["text"] for doc in initial_docs]
-
-    # 2. Запрос к сервису реранкинга
-    rerank_resp = bge_session.post(
-        f"{BGE_SERVICE_URL}/v1/rerank",
-        json={
-            "query": query,
-            "documents": docs_text,
-            "top_n": 5,           # Берем только топ-5 самых релевантных
-            "return_documents": False 
-        }
-    )
-    rerank_resp.raise_for_status()
-    results = rerank_resp.json()["results"]
-    
-    # 3. Формируем контекст из топ-5
-    top_docs = []
-    for res in results:
-        # res['index'] указывает на индекс в исходном списке docs_text
-        original_doc = initial_docs[res["index"]]
-        top_docs.append(original_doc["text"])
-
-    context_str = "\n\n".join(top_docs)
-
-    # 4. Отправка в LLM
-    completion = openai_client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "Answer based on the context."},
-            {"role": "user", "content": f"Context:\n{context_str}\n\nQuestion: {query}"}
-        ]
-    )
-    
-    return completion.choices[0].message.content
+# 4. Передача top_hits в контекст LLM
 ```
 
 ---
 
-## Запуск и Установка
+## 🧪 Тестирование
 
-### Локально
+Для проверки всех юзкейсов используйте встроенный интеграционный тест:
+
 ```bash
-pip install -r requirements.txt
-python -m uvicorn bge_inference_service.main:app --host 0.0.0.0 --port 8011
+# Требуется установленный requests и pytest
+python bge_inference_service/test_integration.py
 ```
 
-### Docker
-```bash
-docker build -t bge-service .
-docker run --gpus all -p 8011:8011 bge-service
-```
+## 📜 Лицензия
+Данный проект является частью системы интеллектуального поиска и распространяется "как есть". Модели BGE и Reranker принадлежат BAAI и распространяются под их соответствующими лицензиями.
