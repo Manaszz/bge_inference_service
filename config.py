@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Limits
     max_text_chars: int = Field(default=10000, env="MAX_TEXT_CHARS")
     max_batch_size: int = Field(default=64, env="MAX_BATCH_SIZE")
+    inference_batch_size: int = Field(default=256, env="INFERENCE_BATCH_SIZE")
 
     # API
     openai_default_model_alias: str = Field(default="bge-m3", env="OPENAI_DEFAULT_MODEL_ALIAS")

@@ -70,7 +70,7 @@ async def health() -> HealthResponse:
 
 
 @app.post("/v1/embeddings", response_model=OpenAIEmbeddingsResponse)
-async def openai_embeddings(req: OpenAIEmbeddingsRequest) -> OpenAIEmbeddingsResponse:
+def openai_embeddings(req: OpenAIEmbeddingsRequest) -> OpenAIEmbeddingsResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")
@@ -84,7 +84,7 @@ async def openai_embeddings(req: OpenAIEmbeddingsRequest) -> OpenAIEmbeddingsRes
 
 
 @app.post("/v1/sparse-embeddings", response_model=SparseEmbeddingsResponse)
-async def sparse_embeddings(req: SparseEmbeddingsRequest) -> SparseEmbeddingsResponse:
+def sparse_embeddings(req: SparseEmbeddingsRequest) -> SparseEmbeddingsResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")
@@ -109,7 +109,7 @@ async def sparse_embeddings(req: SparseEmbeddingsRequest) -> SparseEmbeddingsRes
 
 
 @app.post("/v1/hybrid-embeddings", response_model=HybridEmbeddingsResponse)
-async def hybrid_embeddings(req: HybridEmbeddingsRequest) -> HybridEmbeddingsResponse:
+def hybrid_embeddings(req: HybridEmbeddingsRequest) -> HybridEmbeddingsResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")
@@ -137,7 +137,7 @@ async def hybrid_embeddings(req: HybridEmbeddingsRequest) -> HybridEmbeddingsRes
 
 
 @app.post("/v1/rerank", response_model=RerankResponse)
-async def rerank(req: RerankRequest) -> RerankResponse:
+def rerank(req: RerankRequest) -> RerankResponse:
     engine: BGEEngine = app.state.engine
     if not engine.is_loaded:
         raise HTTPException(status_code=503, detail="Models are not loaded")

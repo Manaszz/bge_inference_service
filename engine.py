@@ -128,7 +128,12 @@ class BGEEngine:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
         prepared = self._prepare_texts(texts)
-        out = self._embedder.encode(prepared, return_sparse=False, return_dense=True)
+        out = self._embedder.encode(
+            prepared, 
+            return_sparse=False, 
+            return_dense=True, 
+            batch_size=self.settings.inference_batch_size
+        )
         dense_vecs = [list(map(float, v)) for v in out["dense_vecs"]]
         expected = int(self.settings.embedding_size)
         for i, v in enumerate(dense_vecs):
@@ -143,7 +148,12 @@ class BGEEngine:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
         prepared = self._prepare_texts(texts)
-        out = self._embedder.encode(prepared, return_sparse=True, return_dense=False)
+        out = self._embedder.encode(
+            prepared, 
+            return_sparse=True, 
+            return_dense=False,
+            batch_size=self.settings.inference_batch_size
+        )
         # lexical_weights: List[Dict[token, weight]]
         return out["lexical_weights"]
 
@@ -155,7 +165,12 @@ class BGEEngine:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
         prepared = self._prepare_texts(texts)
-        out = self._embedder.encode(prepared, return_sparse=True, return_dense=True)
+        out = self._embedder.encode(
+            prepared, 
+            return_sparse=True, 
+            return_dense=True,
+            batch_size=self.settings.inference_batch_size
+        )
         dense_vecs = [list(map(float, v)) for v in out["dense_vecs"]]
         expected = int(self.settings.embedding_size)
         for i, v in enumerate(dense_vecs):
@@ -173,7 +188,23 @@ class BGEEngine:
         q = self._truncate_text(query)
         docs = self._prepare_texts(list(documents))
         pairs = [[q, d] for d in docs]
-        scores = self._reranker.compute_score(pairs)
+        
+        # Check for multiple GPUs if using cuda
+        import torch
+        num_gpus = torch.cuda.device_count()
+        
+        if self.settings.device == "cuda" and num_gpus > 1:
+            self.logger.debug("Using parallel_compute_score on %d GPUs", num_gpus)
+            scores = self._reranker.parallel_compute_score(
+                pairs, 
+                batch_size=self.settings.inference_batch_size
+            )
+        else:
+            scores = self._reranker.compute_score(
+                pairs, 
+                batch_size=self.settings.inference_batch_size
+            )
+            
         if isinstance(scores, (float, int)):
             return [float(scores)]
         return [float(s) for s in scores]
