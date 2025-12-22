@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-12-22
+### Changed
+- Updated dependencies to latest available versions for closed-contour compatibility:
+  - FastAPI: 0.115.0 → 0.122.0
+  - Uvicorn: 0.32.0 → 0.38.0
+  - Pydantic: 2.9.0 → 2.12.5
+  - Pydantic-settings: 2.5.2 → 2.12.0
+  - Starlette: 0.38.6 → 0.50.0
+  - Pydantic-core: 2.23.2 → 2.41.5
+- Added `.cursorrules` with "Always Latest" library policy and mandatory `context7` usage.
+- Added Memory Bank documentation structure for project knowledge retention.
+
+### Fixed
+- Fixed `BGEEngine.rerank` bug: replaced missing `_prepare_texts` call with `prepare_texts` method.
+
+### Added
+- Added `pip-freeze.txt` as the source of truth for installed dependencies.
+- Added `.dockerignore` to optimize Docker build context.
+
 ## [0.2.0] - 2025-12-19
 ### Added
 - Очередь + микробатчинг для эмбеддингов (dense/sparse/hybrid) для эффективной обработки параллельных запросов и лучшей утилизации GPU.

@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="BGE Inference Service",
     description="Standalone embeddings (dense/sparse/hybrid) and rerank API backed by FlagEmbedding.",
-    version="0.1.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 

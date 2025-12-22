@@ -1,0 +1,11 @@
+# Project Rules & Insights
+
+## Library Management
+- **Latest Versions Only**: Always use the most up-to-date versions of libraries for all new features or projects.
+- **Context7 Usage**: Mandatory use of the `context7` tool to fetch current library versions, documentation, and best practices before implementation.
+- **Closed-Contour Compatibility**: When working in restricted environments, verify available versions but prefer the newest possible within the allowed range.
+
+## Development Patterns
+- **Isolation**: Keep inference logic (PyTorch/CUDA) isolated from API logic.
+- **Dependency Pinning**: Always generate a `pip-freeze.txt` or similar lockfile after environment changes to ensure reproducibility.
+

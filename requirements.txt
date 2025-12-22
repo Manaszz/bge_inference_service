@@ -1,4 +1,4 @@
-fastapi===0.122.0
+fastapi==0.122.0
 uvicorn[standard]==0.38.0
 pydantic==2.12.5
 pydantic-settings==2.12.0
@@ -8,3 +8,7 @@ numpy>=1.26.0
 # Inference
 FlagEmbedding>=1.3.5
 transformers>=4.45.0
+
+# Transitive pins for closed-contour mirrors (avoid missing older builds)
+starlette==0.50.0
+pydantic-core==2.41.5
