@@ -195,7 +195,7 @@ class BGEEngine:
         if not self.is_loaded:
             raise RuntimeError("Engine not loaded")
         q = self._truncate_text(query)
-        docs = self._prepare_texts(list(documents))
+        docs = self.prepare_texts(list(documents), max_batch_size=self.settings.max_batch_size)
         pairs = [[q, d] for d in docs]
         
         # Check for multiple GPUs if using cuda
